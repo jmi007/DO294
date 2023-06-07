@@ -1,0 +1,106 @@
+---
+- name: Install and configure the web server hosts
+  hosts: webserver
+  become: true
+  vars:
+    - firewall_pkg: firewalld
+    - firewall_svc: firewalld
+    - web_pkg: httpd
+    - web_svc: httpd
+    - ssl_pkg: mod_ssl
+    - httpdconf_src: files/httpd.conf
+    - httpdconf_dest: /etc/httpd/conf/httpd.conf
+    - htaccess_src: files/.htaccess
+    - secrets_dir: /etc/httpd/secrets
+    - secrets_src: files/htpasswd
+    - secrets_dest: "{{  secrets_dir }}/htpasswd"
+    - web_root: /var/www/html
+
+  tasks:
+    - name: Installed packages the lastest version (Task2)
+      ansible.builtin.dnf:
+        name:
+          - "{{ firewall_pkg }}"
+          - "{{ web_pkg }}"
+          - "{{ ssl_pkg  }}"
+        state: latest
+    
+    - name: Copy files from {{httpdconf_src}} to {{httpdconf_dest}} (Task3)
+      ansible.builtin.copy:
+        src: "{{ httpdconf_src }}"
+        dest: "{{ httpdconf_dest}}"
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Create the directory {{secrets_dir}} (Task4)
+      ansible.builtin.file:
+        path: "{{secrets_dir}}"
+        state: directory
+        owner: apache
+        group: apache
+        mode: '0500'
+    
+    - name: Copy htpasswd file from {{secrets_src}} to {{secrets_dest}} (Task5)
+      ansible.builtin.copy:
+        src: "{{secrets_src}}"
+        dest: "{{secrets_dest}}"
+        owner: apache
+        group: apache
+        mode: '0400'
+
+    - name: Create ./htaccess by copy {{htaccess_src}} to {{web_root}}/.htaccess (Task6)
+      ansible.builtin.copy:
+        src: "{{htaccess_src}}"
+        dest: "{{web_root}}/.htaccess"
+        owner: apache
+        group: apache
+        mode: 0400
+
+    - name: Custom the file content into {{web_root}} (Task7) 
+      ansible.builtin.copy:
+        content: "{{ ansible_facts['fqdn'] }} ({{ ansible_facts ['default_ipv4'] ['address'] }}) has been customized by Ansible"
+        dest: "{{web_root}}/index.html"
+
+    - name: Enable and start firewalld (Task8) 
+      ansible.builtin.service:
+        name: "{{firewall_svc}}"
+        state: started
+        enabled: yes
+
+    - name: Firewalld enable access https (Task9)
+      ansible.posix.firewalld:
+        service: https
+        permanent: true
+        immediate: true
+        state: enabled
+
+    - name: Enable webservices to manage hosts
+      ansible.builtin.service:
+        name: "{{web_svc}}"
+        state: started
+        enabled: true
+
+- name: Test basic authentication to web server
+  hosts: workstation
+  become: false
+  vars:
+    - web_user: guest
+  vars_files:
+    - vars/secret.yml
+
+  tasks:
+    - name: Test access to webserver
+      ansible.builtin.uri:
+        url: https://serverb.lab.example.com
+        validate_certs: no
+        force_basic_auth: yes
+        user: "{{  web_user }}"
+        password: "{{ web_pass }}"
+        return_content: yes
+        status_code: 200
+      register: auth_test
+
+    - ansible.builtin.debug:
+        var: auth_test.content
+
